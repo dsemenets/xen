@@ -99,6 +99,14 @@ void libxl__vchan_arg_add_bool(libxl__gc *gc, libxl__json_object *args,
     obj->u.b = val;
 }
 
+void libxl__vchan_arg_add_integer(libxl__gc *gc, libxl__json_object *args,
+                                 char *key,  int val)
+{
+    libxl__json_object *obj = libxl__vchan_arg_new(gc, JSON_INTEGER, args, key);
+
+    obj->u.i = val;
+}
+
 static void reset_yajl_generator(struct vchan_state *state)
 {
     yajl_gen_clear(state->gen);
@@ -297,34 +305,41 @@ int vchan_process_command(libxl__gc *gc, struct vchan_info *vchan)
     return vchan_write(gc, vchan->state, VCHAN_EOM);
 }
 
-static libxl_domid vchan_find_server(libxl__gc *gc, char *xs_dir, char *xs_file)
+static libxl_domid vchan_find_server(libxl__gc *gc, char *xs_dir, char *xs_file, libxl_domid backend_domid)
 {
-    char **domains;
-    unsigned int i, n;
-    libxl_domid domid = DOMID_INVALID;
+    const char *tmp;
 
-    domains = libxl__xs_directory(gc, XBT_NULL, xs_dir, &n);
-    if (!n)
-        goto out;
+    if (backend_domid == DOMID_INVALID) {
+        char **domains;
+        unsigned int i, n;
 
-    for (i = 0; i < n; i++) {
-        const char *tmp;
-        int d;
+        domains = libxl__xs_directory(gc, XBT_NULL, xs_dir, &n);
+        if (!n)
+            goto out;
 
-        if (sscanf(domains[i], "%d", &d) != 1)
-            continue;
+        for (i = 0; i < n; i++) {
+            int d;
 
-        tmp = libxl__xs_read(gc, XBT_NULL,
-                             GCSPRINTF("%s/%d/data/%s", xs_dir, d, xs_file));
-        /* Found the domain where the server lives. */
-        if (tmp) {
-            domid = d;
-            break;
+            if (sscanf(domains[i], "%d", &d) != 1)
+                continue;
+
+            tmp = libxl__xs_read(gc, XBT_NULL,
+                    GCSPRINTF("%s/%d/data/%s", xs_dir, d, xs_file));
+            /* Found the domain where the server lives. */
+            if (tmp) {
+                backend_domid = d;
+                break;
+            }
         }
+    } else {
+        tmp = libxl__xs_read(gc, XBT_NULL,
+                    GCSPRINTF("%s/%d/data/%s", xs_dir, backend_domid, xs_file));
+        if (!tmp)
+            backend_domid = DOMID_INVALID;
     }
 
 out:
-    return domid;
+    return backend_domid;
 }
 
 static int vchan_init_client(libxl__gc *gc, struct vchan_state *state,
@@ -440,20 +455,19 @@ static int vchan_wait_server_available(libxl__gc *gc, const char *xs_path)
     return ERROR_TIMEDOUT;
 }
 
-struct vchan_state *vchan_new_client(libxl__gc *gc, char *srv_name)
+struct vchan_state *vchan_new_client(libxl__gc *gc, char *srv_name, libxl_domid backend_domid)
 {
-    libxl_domid domid;
     char *xs_path, *vchan_xs_path;
     libxl_uuid uuid;
     libxl_ctx *ctx = libxl__gc_owner(gc);
 
-    domid = vchan_find_server(gc, VCHAN_SRV_DIR, srv_name);
-    if (domid == DOMID_INVALID) {
+    backend_domid = vchan_find_server(gc, VCHAN_SRV_DIR, srv_name, backend_domid);
+    if (backend_domid == DOMID_INVALID) {
         LOGE(ERROR, "Can't find vchan server");
         return NULL;
     }
 
-    xs_path = vchan_get_server_xs_path(gc, domid, srv_name);
+    xs_path = vchan_get_server_xs_path(gc, backend_domid, srv_name);
     LOG(DEBUG, "vchan server at %s\n", xs_path);
 
     /* Generate unique client id. */
@@ -473,7 +487,7 @@ struct vchan_state *vchan_new_client(libxl__gc *gc, char *srv_name)
         return NULL;
     }
 
-    return vchan_init_new_state(gc, domid, vchan_xs_path, false);
+    return vchan_init_new_state(gc, backend_domid, vchan_xs_path, false);
 }
 
 void vchan_fini_one(libxl__gc *gc, struct vchan_state *state)

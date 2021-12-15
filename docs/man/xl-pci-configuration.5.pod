@@ -215,4 +215,18 @@ required to look up the B<BDF> in the list of assignable devices.
 
 =back
 
+=item B<domain>=I<STRING>
+
+=over 4
+
+=item Description
+
+This is domain name with pcid daemon running
+
+=item Default Value
+
+None. Domain name with pcid daemon selects automatically
+
+=back
+
 =back

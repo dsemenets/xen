@@ -2489,7 +2489,7 @@ int libxl_device_events_handler(libxl_ctx *ctx,
  */
 int libxl_device_pci_assignable_add(libxl_ctx *ctx, libxl_device_pci *pci, int rebind);
 int libxl_device_pci_assignable_remove(libxl_ctx *ctx, libxl_device_pci *pci, int rebind);
-libxl_device_pci *libxl_device_pci_assignable_list(libxl_ctx *ctx, int *num);
+libxl_device_pci *libxl_device_pci_assignable_list(libxl_ctx *ctx, int *num, libxl_domid backend_domid);
 void libxl_device_pci_assignable_list_free(libxl_device_pci *list, int num);
 
 /* CPUID handling */

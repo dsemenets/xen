@@ -802,6 +802,8 @@ libxl_device_pci = Struct("device_pci", [
     ("seize", bool),
     ("rdm_policy", libxl_rdm_reserve_policy),
     ("name", string),
+    ("backend", string),
+    ("backend_domid", libxl_domid),
     ])
 
 libxl_device_rdm = Struct("device_rdm", [

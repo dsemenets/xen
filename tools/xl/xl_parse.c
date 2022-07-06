@@ -1519,6 +1519,7 @@ void parse_config_data(const char *config_source,
             pci->power_mgmt = pci_power_mgmt;
             pci->permissive = pci_permissive;
             pci->seize = pci_seize;
+            pci->backend = NULL;
             /*
              * Like other pci option, the per-device policy always follows
              * the global policy by default.

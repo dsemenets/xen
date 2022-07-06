@@ -1,6 +1,8 @@
 #define _GNU_SOURCE
 
 #include <ctype.h>
+#include <stdint.h>
+#include <xen/xen.h>
 
 #include "libxlu_internal.h"
 #include "libxlu_disk_l.h"
@@ -195,8 +197,10 @@ int xlu_pci_parse_spec_string(XLU_Config *cfg, libxl_device_pci *pci,
             name_present = true;
             pci->name = strdup(val);
             if (!pci->name) ret = ERROR_NOMEM;
+        } else if (!strcmp(key, "backend")) {
+            pci->backend = strdup(val);
         } else {
-            XLU__PCI_ERR(cfg, "Unknown PCI_SPEC_STRING option: %s", key);
+            XLU__PCI_ERR(cfg, "Unknown PCI_SPEC_STRING option: '%s'\n", key);
             ret = ERROR_INVAL;
         }
 

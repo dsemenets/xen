@@ -13,7 +13,9 @@
  */
 
 #include <stdlib.h>
+#include <stdint.h>
 
+#include <xen/xen.h>
 #include <libxl.h>
 #include <libxl_utils.h>
 #include <libxlutil.h>
@@ -156,7 +158,7 @@ static void pciassignable_list(bool show_names)
     libxl_device_pci *pcis;
     int num, i;
 
-    pcis = libxl_device_pci_assignable_list(ctx, &num);
+    pcis = libxl_device_pci_assignable_list(ctx, &num, DOMID_INVALID);
 
     if ( pcis == NULL )
         return;

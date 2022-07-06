@@ -152,7 +152,7 @@ static char *pci_prepare_request(libxl__gc *gc, yajl_gen gen, char *cmd,
     return request;
 }
 
-static struct vchan_info *pci_vchan_get_client(libxl__gc *gc)
+static struct vchan_info *pci_vchan_get_client(libxl__gc *gc, libxl_domid backend_domid)
 {
     static struct vchan_info *vchan = NULL;
 
@@ -162,7 +162,7 @@ static struct vchan_info *pci_vchan_get_client(libxl__gc *gc)
     } else {
         vchan = libxl__zalloc(gc, sizeof(*vchan));
     }
-    vchan->state = vchan_new_client(gc, PCID_SRV_NAME);
+    vchan->state = vchan_new_client(gc, PCID_SRV_NAME, backend_domid);
     if (!(vchan->state)) {
         vchan = NULL;
         goto out;
@@ -561,7 +561,7 @@ static void pci_info_xs_remove(libxl__gc *gc, libxl_device_pci *pci,
     xs_rm(ctx->xsh, XBT_NULL, path);
 }
 
-libxl_device_pci *libxl_device_pci_assignable_list(libxl_ctx *ctx, int *num)
+libxl_device_pci *libxl_device_pci_assignable_list(libxl_ctx *ctx, int *num, libxl_domid backend_domid)
 {
     GC_INIT(ctx);
     libxl_device_pci *pcis = NULL, *new;
@@ -571,7 +571,7 @@ libxl_device_pci *libxl_device_pci_assignable_list(libxl_ctx *ctx, int *num)
 
     *num = 0;
 
-    vchan = pci_vchan_get_client(gc);
+    vchan = pci_vchan_get_client(gc, backend_domid);
     if (!vchan)
         goto out;
 
@@ -744,7 +744,7 @@ static int pciback_dev_is_assigned(libxl__gc *gc, libxl_device_pci *pci)
     int rc;
     libxl__json_object *args, *result;
 
-    vchan = pci_vchan_get_client(gc);
+    vchan = pci_vchan_get_client(gc, pci->backend_domid);
     if (!vchan) {
         rc = ERROR_NOT_READY;
         goto out;
@@ -776,7 +776,7 @@ static int libxl__device_pci_assignable_add(libxl__gc *gc,
     int rc;
     libxl__json_object *args, *result;
 
-    vchan = pci_vchan_get_client(gc);
+    vchan = pci_vchan_get_client(gc, pci->backend_domid);
     if (!vchan) {
         rc = ERROR_NOT_READY;
         goto out;
@@ -864,7 +864,7 @@ static int libxl__device_pci_assignable_remove(libxl__gc *gc,
         return ERROR_FAIL;
     }
 
-    vchan = pci_vchan_get_client(gc);
+    vchan = pci_vchan_get_client(gc, pci->backend_domid);
     if (!vchan) {
         rc = ERROR_NOT_READY;
         goto out;
@@ -1339,7 +1339,7 @@ static int pciback_write_bdf(libxl__gc *gc, char *name, libxl_device_pci *pci)
     int rc;
     libxl__json_object *args, *result;
 
-    vchan = pci_vchan_get_client(gc);
+    vchan = pci_vchan_get_client(gc, pci->backend_domid);
     if (!vchan) {
         rc = ERROR_NOT_READY;
         goto out;
@@ -1381,14 +1381,14 @@ static void pci_add_dm_done(libxl__egc *egc,
     libxl__json_object *args;
     const libxl__json_object *value;
     libxl__json_object *res_obj;
+    libxl_device_pci *pci = &pas->pci;
 
-    vchan = pci_vchan_get_client(gc);
+    vchan = pci_vchan_get_client(gc, pci->backend_domid);
     if (!vchan)
         goto out;
 
     /* Convenience aliases */
     bool starting = pas->starting;
-    libxl_device_pci *pci = &pas->pci;
     bool hvm = libxl__domain_type(gc, domid) == LIBXL_DOMAIN_TYPE_HVM;
 
     libxl__ev_qmp_dispose(gc, &pas->qmp);
@@ -1496,14 +1496,13 @@ out:
     pas->callback(egc, pas, rc);
 }
 
-static int libxl__device_pci_reset(libxl__gc *gc, unsigned int domain, unsigned int bus,
-                                   unsigned int dev, unsigned int func)
+static int libxl__device_pci_reset(libxl__gc *gc, libxl_device_pci *pci)
 {
     struct vchan_info *vchan;
     int rc = 0;
     libxl__json_object *args, *result;
 
-    vchan = pci_vchan_get_client(gc);
+    vchan = pci_vchan_get_client(gc, pci->backend_domid);
     if (!vchan) {
         rc = ERROR_NOT_READY;
         goto out;
@@ -1511,7 +1510,7 @@ static int libxl__device_pci_reset(libxl__gc *gc, unsigned int domain, unsigned 
     args = libxl__vchan_start_args(gc);
 
     libxl__vchan_arg_add_string(gc, args, PCID_MSG_FIELD_SBDF,
-            GCSPRINTF(PCID_SBDF_FMT, domain, bus, dev, func));
+            GCSPRINTF(PCID_SBDF_FMT, pci->domain, pci->bus, pci->dev, pci->func));
     result = vchan_send_command(gc, vchan, PCID_CMD_RESET_DEVICE, args);
     if (!result)
         rc = ERROR_FAIL;
@@ -1552,7 +1551,7 @@ static bool libxl_pci_assignable(libxl_ctx *ctx, libxl_device_pci *pci)
     int num;
     bool assignable;
 
-    pcis = libxl_device_pci_assignable_list(ctx, &num);
+    pcis = libxl_device_pci_assignable_list(ctx, &num, pci->backend_domid);
     assignable = is_pci_in_array(pcis, num, pci);
     libxl_device_pci_assignable_list_free(pcis, num);
 
@@ -1567,6 +1566,12 @@ static void device_pci_add_stubdom_done(libxl__egc *egc,
     pci_add_state *, int rc);
 static void device_pci_add_done(libxl__egc *egc,
     pci_add_state *, int rc);
+
+static void device_pci_get_backend_domd(libxl__gc *gc, libxl_device_pci *pci)
+{
+    if (pci->backend == NULL || libxl__resolve_domid(gc, pci->backend, &pci->backend_domid))
+        pci->backend_domid = DOMID_INVALID;
+}
 
 void libxl__device_pci_add(libxl__egc *egc, uint32_t domid,
                            libxl_device_pci *pci, bool starting,
@@ -1593,6 +1598,8 @@ void libxl__device_pci_add(libxl__egc *egc, uint32_t domid,
 
     pas->starting = starting;
     pas->callback = device_pci_add_stubdom_done;
+
+    device_pci_get_backend_domd(gc, pci);
 
     if (libxl__domain_type(gc, domid) == LIBXL_DOMAIN_TYPE_HVM) {
         rc = xc_test_assign_device(ctx->xch, domid, pci_encode_bdf(pci));
@@ -1625,7 +1632,7 @@ void libxl__device_pci_add(libxl__egc *egc, uint32_t domid,
     rc = pci_info_xs_write(gc, pci, "domid", GCSPRINTF("%u", domid));
     if (rc) goto out;
 
-    libxl__device_pci_reset(gc, pci->domain, pci->bus, pci->dev, pci->func);
+    libxl__device_pci_reset(gc, pci);
 
     stubdomid = libxl_get_stubdom_id(ctx, domid);
     if (stubdomid != 0) {
@@ -2190,7 +2197,7 @@ static void pci_remove_detached(libxl__egc *egc,
 
     /* don't do multiple resets while some functions are still passed through */
     if ((pci->vdevfn & 0x7) == 0) {
-        libxl__device_pci_reset(gc, pci->domain, pci->bus, pci->dev, pci->func);
+        libxl__device_pci_reset(gc, pci);
     }
 
     if (!isstubdom) {

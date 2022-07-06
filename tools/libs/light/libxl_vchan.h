@@ -75,7 +75,7 @@ char *vchan_get_server_xs_path(libxl__gc *gc, libxl_domid domid, char *srv_name)
 struct vchan_state *vchan_init_new_state(libxl__gc *gc, libxl_domid domid,
                                          char *vchan_xs_path, bool is_server);
 
-struct vchan_state *vchan_new_client(libxl__gc *gc, char *srv_name);
+struct vchan_state *vchan_new_client(libxl__gc *gc, char *srv_name, libxl_domid domid);
 
 void vchan_fini_one(libxl__gc *gc, struct vchan_state *state);
 

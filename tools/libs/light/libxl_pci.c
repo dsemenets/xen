@@ -18,12 +18,140 @@
 
 #include "libxl_internal.h"
 
+#include <pcid.h>
+
+#include "libxl_vchan.h"
+
 #define PCI_BDF                "%04x:%02x:%02x.%01x"
 #define PCI_BDF_SHORT          "%02x:%02x.%01x"
 #define PCI_BDF_VDEVFN         "%04x:%02x:%02x.%01x@%02x"
 #define PCI_OPTIONS            "msitranslate=%d,power_mgmt=%d"
 #define PCI_BDF_XSPATH         "%04x-%02x-%02x-%01x"
 #define PCI_PT_QDEV_ID         "pci-pt-%02x_%02x.%01x"
+
+static int pci_handle_response(libxl__gc *gc,
+                               const libxl__json_object *response,
+                               libxl__json_object **result)
+{
+    const libxl__json_object *command_obj;
+    const libxl__json_object *err_obj;
+    char *command_name;
+    int ret = 0;
+
+    *result = NULL;
+
+    command_obj = libxl__json_map_get(PCID_MSG_FIELD_RESP, response, JSON_STRING);
+    if (!command_obj) {
+        /* This is an unsupported or bad response. */
+        return 0;
+    }
+
+    err_obj = libxl__json_map_get(PCID_MSG_FIELD_ERR, response, JSON_STRING);
+    if (!err_obj) {
+        /* Bad packet without error code field. */
+        return 0;
+    }
+
+    if (strcmp(err_obj->u.string, PCID_MSG_ERR_OK) != 0) {
+        const libxl__json_object *err_desc_obj;
+
+        /* The response may contain an optional error string. */
+        err_desc_obj = libxl__json_map_get(PCID_MSG_FIELD_ERR_DESC,
+                                           response, JSON_STRING);
+        if (err_desc_obj)
+            LOG(ERROR, "%s", err_desc_obj->u.string);
+        else
+            LOG(ERROR, "%s", err_obj->u.string);
+        return ERROR_FAIL;
+    }
+
+    command_name = command_obj->u.string;
+    LOG(DEBUG, "command: %s", command_name);
+
+    return ret;
+}
+
+#define CONVERT_YAJL_GEN_TO_STATUS(gen) \
+    ((gen) == yajl_gen_status_ok ? yajl_status_ok : yajl_status_error)
+
+static char *pci_prepare_request(libxl__gc *gc, yajl_gen gen, char *cmd,
+                             libxl__json_object *args)
+{
+    const unsigned char *buf;
+    libxl_yajl_length len;
+    yajl_gen_status sts;
+    yajl_status ret;
+    char *request = NULL;
+    int rc;
+
+    ret = CONVERT_YAJL_GEN_TO_STATUS(yajl_gen_map_open(gen));
+    if (ret != yajl_status_ok)
+        return NULL;
+
+    rc = libxl__vchan_field_add_string(gc, gen, PCID_MSG_FIELD_CMD, cmd);
+    if (rc)
+        return NULL;
+
+    if (args) {
+        int idx = 0;
+        libxl__json_map_node *node = NULL;
+
+        assert(args->type == JSON_MAP);
+        for (idx = 0; idx < args->u.map->count; idx++) {
+            if (flexarray_get(args->u.map, idx, (void**)&node) != 0)
+                break;
+
+            ret = CONVERT_YAJL_GEN_TO_STATUS(libxl__yajl_gen_asciiz(gen, node->map_key));
+            if (ret != yajl_status_ok)
+                return NULL;
+            ret = libxl__json_object_to_yajl_gen(gc, gen, node->obj);
+            if (ret != yajl_status_ok)
+                return NULL;
+        }
+    }
+    ret = CONVERT_YAJL_GEN_TO_STATUS(yajl_gen_map_close(gen));
+    if (ret != yajl_status_ok)
+        return NULL;
+
+    sts = yajl_gen_get_buf(gen, &buf, &len);
+    if (sts != yajl_gen_status_ok)
+        return NULL;
+
+    request = libxl__sprintf(gc, "%s", buf);
+
+    vchan_dump_gen(gc, gen);
+
+    return request;
+}
+
+struct vchan_info *pci_vchan_get_client(libxl__gc *gc);
+struct vchan_info *pci_vchan_get_client(libxl__gc *gc)
+{
+    struct vchan_info *vchan;
+
+    vchan = libxl__zalloc(gc, sizeof(*vchan));
+    if (!vchan)
+        goto out;
+    vchan->state = vchan_new_client(gc, PCID_SRV_NAME);
+    if (!(vchan->state)) {
+        vchan = NULL;
+        goto out;
+    }
+
+    vchan->handle_response = pci_handle_response;
+    vchan->prepare_request = pci_prepare_request;
+    vchan->receive_buf_size = PCI_RECEIVE_BUFFER_SIZE;
+    vchan->max_buf_size = PCI_MAX_SIZE_RX_BUF;
+
+out:
+    return vchan;
+}
+
+void pci_vchan_free(libxl__gc *gc, struct vchan_info *vchan);
+void pci_vchan_free(libxl__gc *gc, struct vchan_info *vchan)
+{
+    vchan_fini_one(gc, vchan->state);
+}
 
 static unsigned int pci_encode_bdf(libxl_device_pci *pci)
 {
